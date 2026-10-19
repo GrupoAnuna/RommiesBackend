@@ -1,0 +1,6 @@
+# Archivos ignorados
+service-account.json
+.env
+db.sqlite3
+__pycache__/
+*.pyc
