@@ -176,6 +176,14 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Flat-Flow API",
     "VERSION": "v1",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Agrupa por la primera parte de la ruta tras /api/v1/ (tasks, households, ...)
+    "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
+    # Orden y descripción de cada grupo en Swagger
+    "TAGS": [
+        {"name": "Health", "description": "Estado del servicio."},
+        {"name": "Households", "description": "Hogares, código de invitación, miembros y roles."},
+        {"name": "Tasks", "description": "Tareas del hogar."},
+    ],
 }
 
 

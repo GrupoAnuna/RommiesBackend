@@ -23,7 +23,7 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework import serializers
 
-@extend_schema(responses=inline_serializer(
+@extend_schema(tags=["Health"], summary="Estado del servicio", responses=inline_serializer(
     name="Health",
     fields={"status": serializers.CharField(), "version": serializers.CharField()},
 ))

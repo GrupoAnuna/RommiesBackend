@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -18,6 +18,15 @@ from .serializers import (
 )
 
 
+@extend_schema(tags=['Households'])
+@extend_schema_view(
+    list=extend_schema(summary='Listar mis hogares'),
+    create=extend_schema(summary='Crear hogar', description='El usuario que lo crea queda como owner.'),
+    retrieve=extend_schema(summary='Ver hogar', description='Solo miembros.'),
+    update=extend_schema(summary='Reemplazar hogar', description='Solo admin u owner.'),
+    partial_update=extend_schema(summary='Editar hogar', description='Solo admin u owner.'),
+    destroy=extend_schema(summary='Borrar hogar', description='Solo el owner.'),
+)
 class HouseholdViewSet(viewsets.ModelViewSet):
     serializer_class = HouseholdSerializer
 
@@ -55,7 +64,11 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         household = serializer.save(created_by=self.request.user)
         Membership.objects.create(household=household, user=self.request.user, role=Membership.ROLE_OWNER)
 
-    @extend_schema(request=JoinHouseholdSerializer, responses=HouseholdSerializer)
+    @extend_schema(
+        summary='Unirse con código de invitación',
+        request=JoinHouseholdSerializer,
+        responses=HouseholdSerializer,
+    )
     @action(detail=False, methods=['post'])
     def join(self, request):
         serializer = JoinHouseholdSerializer(data=request.data, context={'request': request})
@@ -70,7 +83,12 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         data = HouseholdSerializer(household, context={'request': request}).data
         return Response(data, status=status.HTTP_201_CREATED)
 
-    @extend_schema(request=None, responses={204: None})
+    @extend_schema(
+        summary='Salir del hogar',
+        description='El owner debe transferir la propiedad antes si quedan otros miembros.',
+        request=None,
+        responses={204: None},
+    )
     @action(detail=True, methods=['post'])
     def leave(self, request, pk=None):
         household = self.get_object()
@@ -87,22 +105,39 @@ class HouseholdViewSet(viewsets.ModelViewSet):
             membership.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @extend_schema(request=None, responses=HouseholdSerializer)
+    @extend_schema(
+        summary='Regenerar código de invitación',
+        description='Solo admin u owner. El código anterior deja de funcionar.',
+        request=None,
+        responses=HouseholdSerializer,
+    )
     @action(detail=True, methods=['post'], url_path='regenerate-code')
     def regenerate_code(self, request, pk=None):
         household = self.get_object()
         household.regenerate_invite_code()
         return Response(self.get_serializer(household).data)
 
-    @extend_schema(responses=MembershipSerializer(many=True))
+    @extend_schema(summary='Listar miembros', responses=MembershipSerializer(many=True))
     @action(detail=True, methods=['get'])
     def members(self, request, pk=None):
         household = self.get_object()
         memberships = household.memberships.select_related('user')
         return Response(MembershipSerializer(memberships, many=True).data)
 
-    @extend_schema(methods=['PATCH'], request=MembershipRoleSerializer, responses=MembershipSerializer)
-    @extend_schema(methods=['DELETE'], request=None, responses={204: None})
+    @extend_schema(
+        methods=['PATCH'],
+        summary='Cambiar rol de un miembro',
+        description='Solo el owner. Asignar role=owner transfiere la propiedad y el owner actual pasa a admin.',
+        request=MembershipRoleSerializer,
+        responses=MembershipSerializer,
+    )
+    @extend_schema(
+        methods=['DELETE'],
+        summary='Expulsar a un miembro',
+        description='Admin u owner. Solo el owner puede expulsar a un admin.',
+        request=None,
+        responses={204: None},
+    )
     @action(detail=True, methods=['patch', 'delete'], url_path=r'members/(?P<user_id>\d+)')
     def member_detail(self, request, pk=None, user_id=None):
         household = self.get_object()
