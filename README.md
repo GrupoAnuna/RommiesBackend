@@ -64,14 +64,45 @@ Todas las rutas requieren autenticación salvo `/health` y la documentación.
 | `GET /health` | Estado del servicio (público) |
 | `/api/docs/` | Swagger UI |
 | `/api/schema/` | Esquema OpenAPI |
+| `GET/POST /api/v1/households/` | Mis hogares / crear hogar (el creador es `owner`) |
+| `GET/PATCH/DELETE /api/v1/households/<id>/` | Ver (miembro) / editar (admin) / borrar (owner) |
+| `POST /api/v1/households/join/` | Unirse con `{"invite_code": "..."}` |
+| `POST /api/v1/households/<id>/leave/` | Salir del hogar |
+| `POST /api/v1/households/<id>/regenerate-code/` | Nuevo código de invitación (admin) |
+| `GET /api/v1/households/<id>/members/` | Listar miembros |
+| `PATCH/DELETE /api/v1/households/<id>/members/<user_id>/` | Cambiar rol (owner) / expulsar (admin) |
 | `/api/v1/tasks/` | Listar / crear tareas |
 | `/api/v1/tasks/<id>/` | Ver / editar / borrar una tarea |
+
+## Hogares y roles
+
+Cada usuario puede pertenecer a varios hogares con uno de estos roles:
+
+| Acción | member | admin | owner |
+|---|:-:|:-:|:-:|
+| Ver hogar y miembros, salir | ✅ | ✅ | ✅ |
+| Editar nombre, regenerar código, expulsar a `member` | | ✅ | ✅ |
+| Cambiar roles, expulsar a `admin`, borrar hogar | | | ✅ |
+
+- Para transferir la propiedad, el owner asigna `role: "owner"` a otro miembro y pasa a ser `admin`.
+- El owner no puede salir mientras haya otros miembros; si es el único, salir borra el hogar.
+- Los no miembros reciben 404, así no se revela que el hogar existe.
+
+Para otras apps, `households.permissions` ofrece `IsHouseholdMember`, `IsHouseholdAdmin` e
+`IsHouseholdOwner`, que funcionan con un `Household` o con cualquier objeto que tenga FK `household`.
+
+## Tests
+
+```bash
+python manage.py test
+```
 
 ## Estructura
 
 ```
 config/          Configuración del proyecto (settings, urls)
 authentication/  Autenticación con Firebase para DRF
+households/      Hogares, miembros, roles y permisos
 tasks/           Tareas del hogar
-accounts/ analytics/ events/ expenses/ files/ households/ profiles/   (pendientes)
+accounts/ analytics/ events/ expenses/ files/ profiles/   (pendientes)
 ```

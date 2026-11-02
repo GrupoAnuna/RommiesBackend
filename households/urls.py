@@ -1,10 +1,10 @@
-from django.urls import path
-from . import views
+from rest_framework.routers import SimpleRouter
+
+from .views import HouseholdViewSet
 
 app_name = "households"
 
-urlpatterns = [
-    # Ejemplos:
-    # path("login/", views.login_view, name="login"),
-    # path("logout/", views.logout_view, name="logout"),
-]
+router = SimpleRouter()
+router.register("households", HouseholdViewSet, basename="household")
+
+urlpatterns = router.urls
