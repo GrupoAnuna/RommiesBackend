@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Tasks
+from .models import Task
 
 # Mostrar la tabla desde el admin de DJANGO 
-admin.site.register(Tasks)
+admin.site.register(Task)

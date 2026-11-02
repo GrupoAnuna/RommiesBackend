@@ -1,6 +1,6 @@
 from django.db import models
 
-class Tasks(models.Model):
+class Task(models.Model):
     PRIORITY_CHOICES = [
         ('low', 'Low'),
         ('medium', 'Medium'),

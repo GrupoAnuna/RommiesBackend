@@ -1,6 +1,7 @@
 from rest_framework import authentication, exceptions
 from firebase_admin import auth as firebase_auth
 from django.contrib.auth import get_user_model
+from drf_spectacular.extensions import OpenApiAuthenticationExtension
 
 User = get_user_model()
 
@@ -36,3 +37,20 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
         )
 
         return (user, None)
+
+    def authenticate_header(self, request):
+        # Permite a DRF responder 401 (en vez de 403) cuando falta el token
+        return 'Bearer'
+
+
+class FirebaseAuthenticationScheme(OpenApiAuthenticationExtension):
+    # Documenta en Swagger el header "Authorization: Bearer <Firebase ID token>"
+    target_class = 'authentication.firebase_auth.FirebaseAuthentication'
+    name = 'FirebaseAuth'
+
+    def get_security_definition(self, auto_schema):
+        return {
+            'type': 'http',
+            'scheme': 'bearer',
+            'bearerFormat': 'Firebase ID token',
+        }

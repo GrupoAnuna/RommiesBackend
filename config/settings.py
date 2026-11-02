@@ -11,15 +11,27 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
-from datetime import timedelta
 import os
 import firebase_admin
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 from firebase_admin import credentials
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Variables de entorno desde .env (ver .env.example)
+load_dotenv(BASE_DIR / '.env')
 
-cred_path = BASE_DIR / 'service-account.json'
+
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def env_list(name, default=''):
+    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
+
+
+cred_path = BASE_DIR / os.getenv('FIREBASE_CREDENTIALS', 'service-account.json')
 # Evitar inicializar dos veces si Django recarga
 if not firebase_admin._apps:
     cred = credentials.Certificate(cred_path)
@@ -30,12 +42,14 @@ if not firebase_admin._apps:
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-z^b9^5y7r!2!y$f&**hm9#f*1ew=xju$%@ajrmip0m46q83t7='
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured('Falta la variable de entorno DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_bool('DJANGO_DEBUG', False)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1')
 
 
 # Application definition
@@ -154,6 +168,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 
@@ -164,12 +179,6 @@ SPECTACULAR_SETTINGS = {
 }
 
 
-CORS_ALLOW_ALL_ORIGINS = True  # en dev; restringe en prod
-
-
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
-    'ROTATE_REFRESH_TOKENS': True,      # opcional
-    'BLACKLIST_AFTER_ROTATION': True,   # opcional (requiere app blacklist)
-}
+# En dev se permite cualquier origen; en prod se listan en CORS_ALLOWED_ORIGINS
+CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL_ORIGINS', DEBUG)
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')

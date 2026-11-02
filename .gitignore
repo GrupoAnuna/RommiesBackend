@@ -2,5 +2,7 @@
 service-account.json
 .env
 db.sqlite3
+venv/
+.venv/
 __pycache__/
 *.pyc

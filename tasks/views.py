@@ -1,16 +1,14 @@
 from rest_framework import generics
-from .models import Tasks
-from .serializers import TasksSerializer
-
-from rest_framework.permissions import IsAuthenticated
+from .models import Task
+from .serializers import TaskSerializer
 
 
 # GET (list) + POST (create)
-class TasksListCreateView(generics.ListCreateAPIView):
-    queryset = Tasks.objects.all()
-    serializer_class = TasksSerializer
+class TaskListCreateView(generics.ListCreateAPIView):
+    queryset = Task.objects.all()
+    serializer_class = TaskSerializer
 
 # GET (detail) + PUT/PATCH (update) + DELETE
-class TasksRetrieveUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Tasks.objects.all()
-    serializer_class = TasksSerializer
+class TaskRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Task.objects.all()
+    serializer_class = TaskSerializer
