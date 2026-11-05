@@ -54,8 +54,15 @@ El cliente inicia sesión con Firebase y envía el **ID token** en cada petició
 Authorization: Bearer <firebase-id-token>
 ```
 
-El backend verifica el token y crea el usuario de Django la primera vez (`username` = UID de Firebase).
+En la primera petición el backend verifica el token y crea el usuario (`accounts.User`, con id UUID,
+`email` y `firebase_uid`). Los usuarios de la app no tienen contraseña local: la gestiona Firebase.
 Todas las rutas requieren autenticación salvo `/health` y la documentación.
+
+Para entrar al admin de Django (`/admin/`) crea una cuenta con contraseña local:
+
+```bash
+python manage.py createsuperuser
+```
 
 ## Endpoints
 
@@ -64,9 +71,10 @@ Todas las rutas requieren autenticación salvo `/health` y la documentación.
 | `GET /health` | Estado del servicio (público) |
 | `/api/docs/` | Swagger UI |
 | `/api/schema/` | Esquema OpenAPI |
+| `GET/PATCH /api/v1/me/` | Mi usuario y mis hogares (`households: []` = sin hogar) |
 | `GET/POST /api/v1/households/` | Mis hogares / crear hogar (el creador es `owner`) |
 | `GET/PATCH/DELETE /api/v1/households/<id>/` | Ver (miembro) / editar (admin) / borrar (owner) |
-| `POST /api/v1/households/join/` | Unirse con `{"invite_code": "..."}` |
+| `POST /api/v1/households/join/` | Unirse con `{"join_code": "..."}` |
 | `POST /api/v1/households/<id>/leave/` | Salir del hogar |
 | `POST /api/v1/households/<id>/regenerate-code/` | Nuevo código de invitación (admin) |
 | `GET /api/v1/households/<id>/members/` | Listar miembros |
@@ -87,6 +95,8 @@ Cada usuario puede pertenecer a varios hogares con uno de estos roles:
 - Para transferir la propiedad, el owner asigna `role: "owner"` a otro miembro y pasa a ser `admin`.
 - El owner no puede salir mientras haya otros miembros; si es el único, salir borra el hogar.
 - Los no miembros reciben 404, así no se revela que el hogar existe.
+- Una membresía `invited` aún no da acceso; al unirse con el código pasa a `active`.
+- `households.owner` se mantiene sincronizado con la membresía de rol `owner`.
 
 Para otras apps, `households.permissions` ofrece `IsHouseholdMember`, `IsHouseholdAdmin` e
 `IsHouseholdOwner`, que funcionan con un `Household` o con cualquier objeto que tenga FK `household`.
@@ -101,8 +111,9 @@ python manage.py test
 
 ```
 config/          Configuración del proyecto (settings, urls)
+accounts/        Usuario (UUID + Firebase) y endpoint /me/
 authentication/  Autenticación con Firebase para DRF
 households/      Hogares, miembros, roles y permisos
 tasks/           Tareas del hogar
-accounts/ analytics/ events/ expenses/ files/ profiles/   (pendientes)
+analytics/ events/ expenses/ files/ profiles/   (pendientes)
 ```

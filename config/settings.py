@@ -90,6 +90,9 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'config.urls'
 
+# Usuario propio con UUID; la autenticación de la app es con Firebase
+AUTH_USER_MODEL = 'accounts.User'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -181,6 +184,7 @@ SPECTACULAR_SETTINGS = {
     # Orden y descripción de cada grupo en Swagger
     "TAGS": [
         {"name": "Health", "description": "Estado del servicio."},
+        {"name": "Me", "description": "Usuario autenticado y sus hogares."},
         {"name": "Households", "description": "Hogares, código de invitación, miembros y roles."},
         {"name": "Tasks", "description": "Tareas del hogar."},
     ],

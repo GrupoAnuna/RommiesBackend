@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status, viewsets
@@ -17,6 +17,8 @@ from .serializers import (
     MembershipSerializer,
 )
 
+UUID_REGEX = r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+
 
 @extend_schema(tags=['Households'])
 @extend_schema_view(
@@ -29,6 +31,8 @@ from .serializers import (
 )
 class HouseholdViewSet(viewsets.ModelViewSet):
     serializer_class = HouseholdSerializer
+    # Un id que no es UUID da 404 en vez de error del servidor
+    lookup_value_regex = UUID_REGEX
 
     # Permisos por acción (además de IsAuthenticated)
     action_permissions = {
@@ -52,16 +56,16 @@ class HouseholdViewSet(viewsets.ModelViewSet):
             return Household.objects.none()
 
         # Solo los hogares del usuario: para los demás el hogar "no existe" (404)
-        my_households = Membership.objects.filter(user=self.request.user).values('household')
+        my_households = Membership.objects.active().filter(user=self.request.user).values('household')
         return (
             Household.objects.filter(pk__in=my_households)
-            .annotate(member_count=Count('memberships'))
+            .annotate(member_count=Count('memberships', filter=Q(memberships__status=Membership.STATUS_ACTIVE)))
             .order_by('-created_at')
         )
 
     @transaction.atomic
     def perform_create(self, serializer):
-        household = serializer.save(created_by=self.request.user)
+        household = serializer.save(owner=self.request.user)
         Membership.objects.create(household=household, user=self.request.user, role=Membership.ROLE_OWNER)
 
     @extend_schema(
@@ -75,9 +79,13 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         household = serializer.context['household']
 
-        _, created = Membership.objects.get_or_create(household=household, user=request.user)
+        membership, created = Membership.objects.get_or_create(household=household, user=request.user)
         if not created:
-            raise ValidationError({'invite_code': 'You are already a member of this household.'})
+            if membership.status == Membership.STATUS_ACTIVE:
+                raise ValidationError({'join_code': 'You are already a member of this household.'})
+            # Tenía una invitación pendiente: unirse con el código la acepta
+            membership.status = Membership.STATUS_ACTIVE
+            membership.save(update_fields=['status'])
 
         household = self.get_queryset().get(pk=household.pk)
         data = HouseholdSerializer(household, context={'request': request}).data
@@ -95,7 +103,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         membership = household.get_membership(request.user)
 
         if membership.is_owner:
-            if household.memberships.exclude(pk=membership.pk).exists():
+            if household.memberships.active().exclude(pk=membership.pk).exists():
                 raise ValidationError(
                     {'detail': 'Transfer ownership to another member before leaving the household.'}
                 )
@@ -114,7 +122,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='regenerate-code')
     def regenerate_code(self, request, pk=None):
         household = self.get_object()
-        household.regenerate_invite_code()
+        household.regenerate_join_code()
         return Response(self.get_serializer(household).data)
 
     @extend_schema(summary='Listar miembros', responses=MembershipSerializer(many=True))
@@ -138,7 +146,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         request=None,
         responses={204: None},
     )
-    @action(detail=True, methods=['patch', 'delete'], url_path=r'members/(?P<user_id>\d+)')
+    @action(detail=True, methods=['patch', 'delete'], url_path=rf'members/(?P<user_id>{UUID_REGEX})')
     def member_detail(self, request, pk=None, user_id=None):
         household = self.get_object()
         actor = household.get_membership(request.user)
@@ -174,10 +182,11 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         role = serializer.validated_data['role']
 
         if role == Membership.ROLE_OWNER:
+            if target.status != Membership.STATUS_ACTIVE:
+                raise ValidationError({'role': 'Ownership can only be transferred to an active member.'})
             # Transferir la propiedad: el owner actual pasa a admin
-            actor.role = Membership.ROLE_ADMIN
-            actor.save(update_fields=['role'])
-
-        target.role = role
-        target.save(update_fields=['role'])
+            actor.household.transfer_ownership(actor, target)
+        else:
+            target.role = role
+            target.save(update_fields=['role'])
         return Response(MembershipSerializer(target).data)

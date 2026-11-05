@@ -14,7 +14,7 @@ def get_membership(user, obj):
     household = get_household(obj)
     if household is None or not user or not user.is_authenticated:
         return None
-    return Membership.objects.filter(household=household, user=user).first()
+    return Membership.objects.active().filter(household=household, user=user).first()
 
 
 class IsHouseholdMember(permissions.BasePermission):

@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import INVITE_CODE_ALPHABET, INVITE_CODE_LENGTH, Household, Membership
+from .models import JOIN_CODE_ALPHABET, JOIN_CODE_LENGTH, Household, Membership
 
 User = get_user_model()
 
@@ -20,12 +20,12 @@ def member_url(household, user):
 
 class HouseholdTestCase(APITestCase):
     def setUp(self):
-        self.owner = User.objects.create(username='uid-owner', email='owner@example.com')
-        self.admin = User.objects.create(username='uid-admin', email='admin@example.com')
-        self.member = User.objects.create(username='uid-member', email='member@example.com')
-        self.outsider = User.objects.create(username='uid-outsider', email='outsider@example.com')
+        self.owner = User.objects.create_user(email='owner@example.com', firebase_uid='uid-owner')
+        self.admin = User.objects.create_user(email='admin@example.com', firebase_uid='uid-admin')
+        self.member = User.objects.create_user(email='member@example.com', firebase_uid='uid-member')
+        self.outsider = User.objects.create_user(email='outsider@example.com', firebase_uid='uid-outsider')
 
-        self.household = Household.objects.create(name='Piso Centro', created_by=self.owner)
+        self.household = Household.objects.create(name='Piso Centro', owner=self.owner)
         Membership.objects.create(household=self.household, user=self.owner, role=Membership.ROLE_OWNER)
         Membership.objects.create(household=self.household, user=self.admin, role=Membership.ROLE_ADMIN)
         Membership.objects.create(household=self.household, user=self.member, role=Membership.ROLE_MEMBER)
@@ -52,31 +52,48 @@ class CreateAndListTests(HouseholdTestCase):
         self.assertEqual(response.data['my_role'], Membership.ROLE_OWNER)
         self.assertEqual(response.data['member_count'], 1)
         household = Household.objects.get(pk=response.data['id'])
-        self.assertEqual(household.created_by, self.outsider)
+        self.assertEqual(household.owner, self.outsider)
         self.assertEqual(household.get_membership(self.outsider).role, Membership.ROLE_OWNER)
 
-    def test_invite_code_is_generated(self):
-        code = self.household.invite_code
-        self.assertEqual(len(code), INVITE_CODE_LENGTH)
-        self.assertTrue(all(char in INVITE_CODE_ALPHABET for char in code))
+    def test_join_code_is_generated(self):
+        code = self.household.join_code
+        self.assertEqual(len(code), JOIN_CODE_LENGTH)
+        self.assertTrue(all(char in JOIN_CODE_ALPHABET for char in code))
 
-    def test_invite_code_cannot_be_set_by_client(self):
+    def test_join_code_and_owner_cannot_be_set_by_client(self):
         self.as_user(self.outsider)
-        response = self.client.post(LIST_URL, {'name': 'Casa', 'invite_code': 'AAAAAAAA'})
-        self.assertNotEqual(response.data['invite_code'], 'AAAAAAAA')
+        response = self.client.post(LIST_URL, {'name': 'Casa', 'join_code': 'AAAAAAAA', 'owner': self.owner.pk})
+        self.assertNotEqual(response.data['join_code'], 'AAAAAAAA')
+        self.assertEqual(response.data['owner'], self.outsider.pk)
 
     def test_list_only_shows_my_households(self):
-        Household.objects.create(name='Ajeno')
+        Household.objects.create(name='Ajeno', owner=self.outsider)
         self.as_user(self.member)
         response = self.client.get(LIST_URL)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual([h['id'] for h in response.data], [self.household.pk])
+        self.assertEqual([h['id'] for h in response.data], [str(self.household.pk)])
         self.assertEqual(response.data[0]['member_count'], 3)
         self.assertEqual(response.data[0]['my_role'], Membership.ROLE_MEMBER)
 
 
 class AccessTests(HouseholdTestCase):
+    def test_invalid_id_returns_404(self):
+        self.as_user(self.member)
+        response = self.client.get('/api/v1/households/not-a-uuid/')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_invited_user_is_not_a_member_yet(self):
+        Membership.objects.create(
+            household=self.household, user=self.outsider, status=Membership.STATUS_INVITED,
+        )
+        self.as_user(self.outsider)
+        self.assertEqual(self.client.get(detail_url(self.household)).status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.client.get(LIST_URL).data, [])
+
+        self.as_user(self.member)
+        self.assertEqual(self.client.get(detail_url(self.household)).data['member_count'], 3)
+
     def test_member_can_retrieve(self):
         self.as_user(self.member)
         response = self.client.get(detail_url(self.household))
@@ -113,31 +130,42 @@ class AccessTests(HouseholdTestCase):
 class JoinTests(HouseholdTestCase):
     def test_join_with_code(self):
         self.as_user(self.outsider)
-        response = self.client.post(JOIN_URL, {'invite_code': self.household.invite_code})
+        response = self.client.post(JOIN_URL, {'join_code': self.household.join_code})
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['id'], self.household.pk)
+        self.assertEqual(response.data['id'], str(self.household.pk))
         self.assertEqual(response.data['my_role'], Membership.ROLE_MEMBER)
         self.assertEqual(response.data['member_count'], 4)
 
     def test_join_code_is_case_insensitive(self):
         self.as_user(self.outsider)
-        response = self.client.post(JOIN_URL, {'invite_code': f'  {self.household.invite_code.lower()} '})
+        response = self.client.post(JOIN_URL, {'join_code': f'  {self.household.join_code.lower()} '})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_join_with_invalid_code(self):
         self.as_user(self.outsider)
-        response = self.client.post(JOIN_URL, {'invite_code': 'NOPE2345'})
+        response = self.client.post(JOIN_URL, {'join_code': 'NOPE2345'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_join_twice_fails(self):
         self.as_user(self.member)
-        response = self.client.post(JOIN_URL, {'invite_code': self.household.invite_code})
+        response = self.client.post(JOIN_URL, {'join_code': self.household.join_code})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(self.household.memberships.filter(user=self.member).count(), 1)
 
+    def test_join_accepts_pending_invitation(self):
+        Membership.objects.create(
+            household=self.household, user=self.outsider, status=Membership.STATUS_INVITED,
+        )
+        self.as_user(self.outsider)
+        response = self.client.post(JOIN_URL, {'join_code': self.household.join_code})
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        membership = Membership.objects.get(household=self.household, user=self.outsider)
+        self.assertEqual(membership.status, Membership.STATUS_ACTIVE)
+
     def test_regenerate_code(self):
-        old_code = self.household.invite_code
+        old_code = self.household.join_code
 
         self.as_user(self.member)
         url = detail_url(self.household) + 'regenerate-code/'
@@ -146,12 +174,12 @@ class JoinTests(HouseholdTestCase):
         self.as_user(self.admin)
         response = self.client.post(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertNotEqual(response.data['invite_code'], old_code)
+        self.assertNotEqual(response.data['join_code'], old_code)
 
         # El código antiguo deja de servir
         self.as_user(self.outsider)
         self.assertEqual(
-            self.client.post(JOIN_URL, {'invite_code': old_code}).status_code,
+            self.client.post(JOIN_URL, {'join_code': old_code}).status_code,
             status.HTTP_400_BAD_REQUEST,
         )
 
@@ -212,6 +240,18 @@ class MembersTests(HouseholdTestCase):
         self.assertEqual(self.role_of(self.member), Membership.ROLE_OWNER)
         self.assertEqual(self.role_of(self.owner), Membership.ROLE_ADMIN)
         self.assertEqual(self.household.memberships.filter(role=Membership.ROLE_OWNER).count(), 1)
+        self.household.refresh_from_db()
+        self.assertEqual(self.household.owner, self.member)
+
+    def test_cannot_transfer_ownership_to_invited_user(self):
+        Membership.objects.create(
+            household=self.household, user=self.outsider, status=Membership.STATUS_INVITED,
+        )
+        self.as_user(self.owner)
+        response = self.client.patch(member_url(self.household, self.outsider), {'role': 'owner'})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.household.refresh_from_db()
+        self.assertEqual(self.household.owner, self.owner)
 
     def test_cannot_change_own_membership(self):
         self.as_user(self.owner)
@@ -225,7 +265,7 @@ class MembersTests(HouseholdTestCase):
         self.assertIsNone(self.household.get_membership(self.member))
 
     def test_admin_cannot_remove_admin_or_owner(self):
-        other_admin = User.objects.create(username='uid-admin2')
+        other_admin = User.objects.create_user(email='admin2@example.com', firebase_uid='uid-admin2')
         Membership.objects.create(household=self.household, user=other_admin, role=Membership.ROLE_ADMIN)
 
         self.as_user(self.admin)

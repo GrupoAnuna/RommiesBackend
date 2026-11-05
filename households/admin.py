@@ -10,12 +10,12 @@ class MembershipInline(admin.TabularInline):
 
 @admin.register(Household)
 class HouseholdAdmin(admin.ModelAdmin):
-    list_display = ('name', 'invite_code', 'created_by', 'created_at')
-    search_fields = ('name', 'invite_code')
+    list_display = ('name', 'join_code', 'owner', 'created_at')
+    search_fields = ('name', 'join_code')
     inlines = [MembershipInline]
 
 
 @admin.register(Membership)
 class MembershipAdmin(admin.ModelAdmin):
-    list_display = ('user', 'household', 'role', 'joined_at')
-    list_filter = ('role',)
+    list_display = ('user', 'household', 'role', 'status', 'created_at')
+    list_filter = ('role', 'status')
