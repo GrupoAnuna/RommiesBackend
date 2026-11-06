@@ -38,6 +38,10 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 
 
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
@@ -50,6 +54,12 @@ if not SECRET_KEY:
 DEBUG = env_bool('DJANGO_DEBUG', False)
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1')
+SECRET_KEY = 'django-insecure-z^b9^5y7r!2!y$f&**hm9#f*1ew=xju$%@ajrmip0m46q83t7='
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = True
+
+ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -70,6 +80,13 @@ INSTALLED_APPS = [
     'households',
     'profiles',
     'tasks',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+
     # Terceros
     "rest_framework",
     "corsheaders",
@@ -175,6 +192,16 @@ REST_FRAMEWORK = {
 }
 
 
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "PAGE_SIZE": 20,
+}
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Flat-Flow API",
     "VERSION": "v1",
@@ -194,3 +221,7 @@ SPECTACULAR_SETTINGS = {
 # En dev se permite cualquier origen; en prod se listan en CORS_ALLOWED_ORIGINS
 CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL_ORIGINS', DEBUG)
 CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
+}
+
+
+CORS_ALLOW_ALL_ORIGINS = True  # en dev; restringe en prod

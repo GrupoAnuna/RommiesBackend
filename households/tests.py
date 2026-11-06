@@ -292,3 +292,6 @@ class MembersTests(HouseholdTestCase):
         self.as_user(self.owner)
         response = self.client.delete(member_url(self.household, self.outsider))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+from django.test import TestCase
+
+# Create your tests here.

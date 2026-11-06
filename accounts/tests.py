@@ -102,3 +102,6 @@ class FirebaseAuthenticationTests(APITestCase):
         User.objects.create_user(email='ana@example.com', firebase_uid='uid-ana', is_active=False)
         verify.return_value = {'uid': 'uid-ana', 'email': 'ana@example.com'}
         self.assertEqual(self.get_me().status_code, status.HTTP_401_UNAUTHORIZED)
+from django.test import TestCase
+
+# Create your tests here.

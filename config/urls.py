@@ -30,6 +30,10 @@ from rest_framework import serializers
 @api_view(["GET"])
 @authentication_classes([])
 @permission_classes([AllowAny])
+from rest_framework.decorators import api_view
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
+@api_view(["GET"])
 def health(_request):
     return Response({"status": "ok", "version": "v1"})
 
@@ -53,5 +57,12 @@ urlpatterns = [
         path("", include("households.urls")),
         path("", include("profiles.urls")),
         path("", include("tasks.urls")),
+        path("", include("households.urls")),
+        path("", include("tasks.urls")),
+        path("", include("expenses.urls")),
+        path("", include("events.urls")),
+        path("", include("profiles.urls")),
+        path("", include("files.urls")),
+        path("", include("analytics.urls")),
     ])),
 ]

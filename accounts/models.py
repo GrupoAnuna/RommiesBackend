@@ -39,3 +39,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+from django.db import models
+
+# Create your models here.
