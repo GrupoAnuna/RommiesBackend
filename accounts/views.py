@@ -18,6 +18,3 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
-from django.shortcuts import render
-
-# Create your views here.

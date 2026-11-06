@@ -19,5 +19,3 @@ class UserAdmin(BaseUserAdmin):
     add_fieldsets = (
         (None, {'classes': ('wide',), 'fields': ('email', 'password1', 'password2')}),
     )
-
-# Register your models here.
