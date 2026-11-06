@@ -19,4 +19,3 @@ class HouseholdAdmin(admin.ModelAdmin):
 class MembershipAdmin(admin.ModelAdmin):
     list_display = ('user', 'household', 'role', 'status', 'created_at')
     list_filter = ('role', 'status')
-# Register your models here.

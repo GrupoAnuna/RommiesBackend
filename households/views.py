@@ -190,6 +190,3 @@ class HouseholdViewSet(viewsets.ModelViewSet):
             target.role = role
             target.save(update_fields=['role'])
         return Response(MembershipSerializer(target).data)
-from django.shortcuts import render
-
-# Create your views here.
