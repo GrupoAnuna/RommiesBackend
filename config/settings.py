@@ -11,6 +11,32 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
+import firebase_admin
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
+from firebase_admin import credentials
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Variables de entorno desde .env (ver .env.example)
+load_dotenv(BASE_DIR / '.env')
+
+
+def env_bool(name, default=False):
+    return os.getenv(name, str(default)).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def env_list(name, default=''):
+    return [item.strip() for item in os.getenv(name, default).split(',') if item.strip()]
+
+
+cred_path = BASE_DIR / os.getenv('FIREBASE_CREDENTIALS', 'service-account.json')
+# Evitar inicializar dos veces si Django recarga
+if not firebase_admin._apps:
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred)
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,6 +46,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured('Falta la variable de entorno DJANGO_SECRET_KEY')
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = env_bool('DJANGO_DEBUG', False)
+
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1')
 SECRET_KEY = 'django-insecure-z^b9^5y7r!2!y$f&**hm9#f*1ew=xju$%@ajrmip0m46q83t7='
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -38,6 +72,14 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     # App propias
+    'accounts',
+    'analytics',
+    'events',
+    'expenses',
+    'files',
+    'households',
+    'profiles',
+    'tasks',
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -64,6 +106,9 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'config.urls'
+
+# Usuario propio con UUID; la autenticación de la app es con Firebase
+AUTH_USER_MODEL = 'accounts.User'
 
 TEMPLATES = [
     {
@@ -136,6 +181,17 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'authentication.firebase_auth.FirebaseAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -150,6 +206,21 @@ SPECTACULAR_SETTINGS = {
     "TITLE": "Flat-Flow API",
     "VERSION": "v1",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Agrupa por la primera parte de la ruta tras /api/v1/ (tasks, households, ...)
+    "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
+    # Orden y descripción de cada grupo en Swagger
+    "TAGS": [
+        {"name": "Health", "description": "Estado del servicio."},
+        {"name": "Me", "description": "Usuario autenticado y sus hogares."},
+        {"name": "Households", "description": "Hogares, código de invitación, miembros y roles."},
+        {"name": "Tasks", "description": "Tareas del hogar."},
+    ],
+}
+
+
+# En dev se permite cualquier origen; en prod se listan en CORS_ALLOWED_ORIGINS
+CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL_ORIGINS', DEBUG)
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS')
 }
 
 

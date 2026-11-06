@@ -17,6 +17,19 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.response import Response
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny
+from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from rest_framework import serializers
+
+@extend_schema(tags=["Health"], summary="Estado del servicio", responses=inline_serializer(
+    name="Health",
+    fields={"status": serializers.CharField(), "version": serializers.CharField()},
+))
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
 from rest_framework.decorators import api_view
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
@@ -37,6 +50,13 @@ urlpatterns = [
     # API v1 (agregaremos routers por app)
     path("api/v1/", include([
         path("", include("accounts.urls")),
+        path("", include("analytics.urls")), 
+        path("", include("events.urls")),
+        path("", include("expenses.urls")),
+        path("", include("files.urls")),
+        path("", include("households.urls")),
+        path("", include("profiles.urls")),
+        path("", include("tasks.urls")),
         path("", include("households.urls")),
         path("", include("tasks.urls")),
         path("", include("expenses.urls")),
