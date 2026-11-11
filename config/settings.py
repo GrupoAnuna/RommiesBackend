@@ -172,6 +172,10 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_RATES': {
+        # Buscar o usar un código de invitación, por usuario
+        'join_code': '20/min',
+    },
 }
 
 
