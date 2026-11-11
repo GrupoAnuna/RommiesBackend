@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Household, Membership
+from .models import Household, Membership, normalize_join_code
 
 
 class HouseholdSerializer(serializers.ModelSerializer):
@@ -23,15 +23,42 @@ class HouseholdSerializer(serializers.ModelSerializer):
 
 
 class JoinHouseholdSerializer(serializers.Serializer):
-    join_code = serializers.CharField(max_length=8)
+    # Admite el formato que muestra la app: «FLOWY-XXXXXX»
+    join_code = serializers.CharField(max_length=20)
 
     def validate_join_code(self, value):
-        code = value.strip().upper()
+        code = normalize_join_code(value)
         try:
             self.context['household'] = Household.objects.get(join_code=code)
         except Household.DoesNotExist:
-            raise serializers.ValidationError('Invalid join code.')
+            raise serializers.ValidationError('Invalid join code.', code='invalid_join_code')
         return code
+
+
+class HouseholdPreviewSerializer(serializers.ModelSerializer):
+    """Lo que ve quien tiene el código antes de unirse (pantalla «¿Es este tu hogar?»)."""
+
+    member_count = serializers.SerializerMethodField()
+    member_names = serializers.SerializerMethodField()
+    owner_name = serializers.CharField(source='owner.name', read_only=True)
+    is_member = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Household
+        fields = ['id', 'name', 'member_count', 'member_names', 'owner_name', 'is_member']
+
+    def _active_memberships(self, obj):
+        return obj.memberships.active().select_related('user')
+
+    def get_member_count(self, obj) -> int:
+        return self._active_memberships(obj).count()
+
+    def get_member_names(self, obj) -> list[str]:
+        # Solo los nombres, para las iniciales de los avatares; nunca los correos
+        return [membership.user.name for membership in self._active_memberships(obj)]
+
+    def get_is_member(self, obj) -> bool:
+        return obj.get_membership(self.context['request'].user) is not None
 
 
 class MembershipSerializer(serializers.ModelSerializer):

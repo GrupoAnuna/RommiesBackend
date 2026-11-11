@@ -6,7 +6,11 @@ from django.db import models
 
 # Sin caracteres ambiguos (0/O, 1/I/L) para que el código sea fácil de dictar
 JOIN_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
-JOIN_CODE_LENGTH = 8
+JOIN_CODE_LENGTH = 6
+# Largo de la columna: los hogares creados antes tienen códigos de 8
+JOIN_CODE_MAX_LENGTH = 8
+# La app muestra el código como FLOWY-XXXXXX; el prefijo no se guarda
+JOIN_CODE_PREFIX = 'FLOWY-'
 
 
 def generate_join_code():
@@ -16,10 +20,18 @@ def generate_join_code():
             return code
 
 
+def normalize_join_code(value):
+    # Acepta minúsculas, espacios y el código con o sin «FLOWY-»
+    code = value.strip().upper().replace(' ', '')
+    if code.startswith(JOIN_CODE_PREFIX):
+        code = code[len(JOIN_CODE_PREFIX):]
+    return code
+
+
 class Household(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120)
-    join_code = models.CharField(max_length=JOIN_CODE_LENGTH, unique=True, default=generate_join_code)
+    join_code = models.CharField(max_length=JOIN_CODE_MAX_LENGTH, unique=True, default=generate_join_code)
     # Se mantiene sincronizado con la membresía de rol owner (ver transfer_ownership)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,

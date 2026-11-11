@@ -8,6 +8,7 @@ User = get_user_model()
 
 LIST_URL = '/api/v1/households/'
 JOIN_URL = '/api/v1/households/join/'
+LOOKUP_URL = '/api/v1/households/lookup/'
 
 
 def detail_url(household):
@@ -142,10 +143,22 @@ class JoinTests(HouseholdTestCase):
         response = self.client.post(JOIN_URL, {'join_code': f'  {self.household.join_code.lower()} '})
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_join_accepts_code_with_app_prefix(self):
+        self.as_user(self.outsider)
+        response = self.client.post(JOIN_URL, {'join_code': f'flowy-{self.household.join_code}'})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
     def test_join_with_invalid_code(self):
         self.as_user(self.outsider)
         response = self.client.post(JOIN_URL, {'join_code': 'NOPE2345'})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_join_is_throttled(self):
+        self.as_user(self.outsider)
+        for _ in range(20):
+            self.client.post(JOIN_URL, {'join_code': 'NOPE23'})
+        response = self.client.post(JOIN_URL, {'join_code': 'NOPE23'})
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
     def test_join_twice_fails(self):
         self.as_user(self.member)
@@ -182,6 +195,39 @@ class JoinTests(HouseholdTestCase):
             self.client.post(JOIN_URL, {'join_code': old_code}).status_code,
             status.HTTP_400_BAD_REQUEST,
         )
+
+
+class LookupTests(HouseholdTestCase):
+    def setUp(self):
+        super().setUp()
+        self.owner.name = 'Tomás Ruiz'
+        self.owner.save(update_fields=['name'])
+
+    def test_outsider_sees_household_before_joining(self):
+        self.as_user(self.outsider)
+        response = self.client.post(LOOKUP_URL, {'join_code': f'FLOWY-{self.household.join_code}'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['name'], 'Piso Centro')
+        self.assertEqual(response.data['member_count'], 3)
+        self.assertEqual(len(response.data['member_names']), 3)
+        self.assertEqual(response.data['owner_name'], 'Tomás Ruiz')
+        self.assertFalse(response.data['is_member'])
+        self.assertNotIn('join_code', response.data)
+        # Buscar no une al hogar
+        self.assertFalse(self.household.memberships.filter(user=self.outsider).exists())
+
+    def test_member_is_flagged(self):
+        self.as_user(self.member)
+        response = self.client.post(LOOKUP_URL, {'join_code': self.household.join_code})
+        self.assertTrue(response.data['is_member'])
+
+    def test_invalid_code(self):
+        self.as_user(self.outsider)
+        response = self.client.post(LOOKUP_URL, {'join_code': 'FLOWY-NOPE23'})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['join_code'][0].code, 'invalid_join_code')
 
 
 class LeaveTests(HouseholdTestCase):

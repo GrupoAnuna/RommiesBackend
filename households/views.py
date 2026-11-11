@@ -7,15 +7,21 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from .models import Household, Membership
 from .permissions import IsHouseholdAdmin, IsHouseholdMember, IsHouseholdOwner
 from .serializers import (
+    HouseholdPreviewSerializer,
     HouseholdSerializer,
     JoinHouseholdSerializer,
     MembershipRoleSerializer,
     MembershipSerializer,
 )
+
+# Acciones que reciben un código de invitación: se limitan para que no se
+# puedan adivinar códigos a fuerza de intentos
+JOIN_CODE_ACTIONS = {'lookup', 'join'}
 
 UUID_REGEX = r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 
@@ -50,6 +56,12 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         extra = self.action_permissions.get(self.action, [])
         return [IsAuthenticated()] + [permission() for permission in extra]
 
+    def get_throttles(self):
+        if self.action in JOIN_CODE_ACTIONS:
+            self.throttle_scope = 'join_code'
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
     def get_queryset(self):
         # drf-spectacular genera el esquema sin usuario real
         if getattr(self, 'swagger_fake_view', False):
@@ -67,6 +79,19 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         household = serializer.save(owner=self.request.user)
         Membership.objects.create(household=household, user=self.request.user, role=Membership.ROLE_OWNER)
+
+    @extend_schema(
+        summary='Buscar hogar por código',
+        description='Muestra el hogar antes de unirse. No cambia nada; is_member indica si ya perteneces.',
+        request=JoinHouseholdSerializer,
+        responses=HouseholdPreviewSerializer,
+    )
+    @action(detail=False, methods=['post'])
+    def lookup(self, request):
+        serializer = JoinHouseholdSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        household = serializer.context['household']
+        return Response(HouseholdPreviewSerializer(household, context={'request': request}).data)
 
     @extend_schema(
         summary='Unirse con código de invitación',
