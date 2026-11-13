@@ -1,16 +1,13 @@
 from django.db import transaction
-from django.http import Http404
 from django.utils import timezone
-from django.utils.functional import cached_property
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
-from households.models import Household
+from households.mixins import HOUSEHOLD_PARAM, HouseholdPagination, HouseholdScopedMixin
 from households.views import UUID_REGEX
 
 from .models import Task
@@ -24,13 +21,6 @@ from .serializers import (
 )
 
 
-class TaskPagination(PageNumberPagination):
-    page_size = 50
-    page_size_query_param = 'page_size'
-    max_page_size = 100
-
-
-HOUSEHOLD_PARAM = OpenApiParameter('household_pk', OpenApiTypes.UUID, OpenApiParameter.PATH, description='Id del hogar.')
 TASK_PARAM = OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, description='Id de la tarea.')
 
 
@@ -54,40 +44,18 @@ TASK_PARAM = OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, de
         parameters=[TASK_PARAM],
     ),
 )
-class TaskViewSet(viewsets.ModelViewSet):
+class TaskViewSet(HouseholdScopedMixin, viewsets.ModelViewSet):
     serializer_class = TaskSerializer
-    pagination_class = TaskPagination
+    pagination_class = HouseholdPagination
     lookup_value_regex = UUID_REGEX
-
-    @cached_property
-    def household(self):
-        # Para quien no es miembro, el hogar "no existe" (404), igual que en /households/
-        household = Household.objects.filter(pk=self.kwargs['household_pk']).first()
-        membership = household.get_membership(self.request.user) if household else None
-        if membership is None:
-            raise Http404
-        self.membership = membership
-        return household
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        if not getattr(self, 'swagger_fake_view', False):
-            self.household  # 404 antes de cualquier acción si no es miembro
 
     def check_object_permissions(self, request, obj):
         super().check_object_permissions(request, obj)
         if self.action == 'destroy' and not (obj.created_by_id == request.user.pk or self.membership.is_admin):
             raise PermissionDenied('Only the creator or a household admin can delete this task.')
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if not getattr(self, 'swagger_fake_view', False):
-            context['household'] = self.household
-        return context
-
     def get_queryset(self):
-        # drf-spectacular genera el esquema sin usuario ni hogar reales
-        if getattr(self, 'swagger_fake_view', False):
+        if self.is_schema_view:
             return Task.objects.none()
 
         queryset = (
