@@ -16,7 +16,6 @@ from households.views import UUID_REGEX
 from .models import Task
 from .serializers import (
     ASSIGNEE_ME,
-    ASSIGNEE_UNASSIGNED,
     STATUS_DONE,
     STATUS_PENDING,
     CompleteTaskResponseSerializer,
@@ -42,11 +41,18 @@ TASK_PARAM = OpenApiParameter('id', OpenApiTypes.UUID, OpenApiParameter.PATH, de
         description='Ordenadas por fecha. Paginadas de 50 en 50 (?page=, ?page_size= hasta 100).',
         parameters=[TaskFilterSerializer],
     ),
-    create=extend_schema(summary='Crear tarea', description='Cualquier miembro. Solo se asigna a miembros del hogar.'),
+    create=extend_schema(
+        summary='Crear tarea',
+        description='Cualquier miembro. Al menos un responsable, todos miembros del hogar.',
+    ),
     retrieve=extend_schema(summary='Ver tarea', parameters=[TASK_PARAM]),
     update=extend_schema(summary='Reemplazar tarea', parameters=[TASK_PARAM]),
     partial_update=extend_schema(summary='Editar tarea', parameters=[TASK_PARAM]),
-    destroy=extend_schema(summary='Borrar tarea', description='Solo admin u owner.', parameters=[TASK_PARAM]),
+    destroy=extend_schema(
+        summary='Borrar tarea',
+        description='Quien la creó, o un admin u owner.',
+        parameters=[TASK_PARAM],
+    ),
 )
 class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
@@ -70,8 +76,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def check_object_permissions(self, request, obj):
         super().check_object_permissions(request, obj)
-        if self.action == 'destroy' and not self.membership.is_admin:
-            raise PermissionDenied('Only household admins can delete tasks.')
+        if self.action == 'destroy' and not (obj.created_by_id == request.user.pk or self.membership.is_admin):
+            raise PermissionDenied('Only the creator or a household admin can delete this task.')
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -84,7 +90,11 @@ class TaskViewSet(viewsets.ModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return Task.objects.none()
 
-        queryset = Task.objects.filter(household=self.household).select_related('assignee', 'next_occurrence')
+        queryset = (
+            Task.objects.filter(household=self.household)
+            .select_related('next_occurrence')
+            .prefetch_related('assignees')
+        )
         if self.action == 'list':
             queryset = self._filter(queryset)
         return queryset
@@ -102,16 +112,14 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         assignee = filters.get('assignee')
         if assignee == ASSIGNEE_ME:
-            queryset = queryset.filter(assignee=self.request.user)
-        elif assignee == ASSIGNEE_UNASSIGNED:
-            queryset = queryset.filter(assignee__isnull=True)
+            queryset = queryset.filter(assignees=self.request.user)
         elif assignee is not None:
-            queryset = queryset.filter(assignee_id=assignee)
+            queryset = queryset.filter(assignees=assignee)
 
         if 'due_from' in filters:
-            queryset = queryset.filter(due_at__gte=filters['due_from'])
+            queryset = queryset.filter(due_date__gte=filters['due_from'])
         if 'due_to' in filters:
-            queryset = queryset.filter(due_at__lte=filters['due_to'])
+            queryset = queryset.filter(due_date__lte=filters['due_to'])
         return queryset
 
     def perform_create(self, serializer):
@@ -120,7 +128,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary='Completar tarea',
         description=(
-            'Cualquier miembro. Si la tarea es semanal crea la de la semana siguiente '
+            'Cualquier miembro. Si la tarea se repite crea la del siguiente día marcado '
             '(una sola vez, aunque se reabra y se vuelva a completar).'
         ),
         request=None,
@@ -137,7 +145,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 task.save(update_fields=['completed_at', 'completed_by', 'updated_at'])
 
             next_task = task.get_next_occurrence()
-            if task.repeat_rule == Task.REPEAT_WEEKLY and next_task is None:
+            if task.repeat_days and next_task is None:
                 next_task = task.create_next_occurrence()
 
         context = self.get_serializer_context()
@@ -148,7 +156,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary='Reabrir tarea',
-        description='Deshace el completado. La tarea de la semana siguiente, si ya se creó, se conserva.',
+        description='Deshace el completado. La siguiente repetición, si ya se creó, se conserva.',
         request=None,
         parameters=[TASK_PARAM],
         responses=TaskSerializer,
