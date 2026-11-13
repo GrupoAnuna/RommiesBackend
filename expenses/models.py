@@ -24,7 +24,7 @@ def amount_field(**kwargs):
 
 
 class Expense(models.Model):
-    """Quién pagó qué. No calcula saldos: solo registra lo que le toca a cada uno."""
+    """Quién pagó qué y lo que le toca a cada uno. Los saldos se calculan en balances.py."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='expenses')
@@ -33,14 +33,6 @@ class Expense(models.Model):
     paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='paid_expenses')
     # Día del gasto (no el de captura)
     spent_on = models.DateField(default=timezone.localdate)
-    settled_at = models.DateTimeField(null=True, blank=True)
-    settled_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='+',
-    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -54,10 +46,6 @@ class Expense(models.Model):
     class Meta:
         ordering = ['-spent_on', '-created_at']
         indexes = [models.Index(fields=['household', 'spent_on'], name='expenses_household_date_idx')]
-
-    @property
-    def is_settled(self):
-        return self.settled_at is not None
 
     def __str__(self):
         return f'{self.title} ({self.amount})'
@@ -78,3 +66,36 @@ class ExpenseParticipant(models.Model):
 
     def __str__(self):
         return f'{self.user} · {self.amount}'
+
+
+class Payment(models.Model):
+    """Reembolso: dinero que una persona le pasó a otra para saldar cuentas."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='payments')
+    from_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='payments_sent')
+    to_user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='payments_received')
+    amount = amount_field()
+    paid_on = models.DateField(default=timezone.localdate)
+    note = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-paid_on', '-created_at']
+        indexes = [models.Index(fields=['household', 'paid_on'], name='payments_household_date_idx')]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(from_user=models.F('to_user')),
+                name='payment_between_different_people',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.from_user} → {self.to_user} · {self.amount}'

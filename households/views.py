@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
+from expenses.balances import user_balance
+
 from .models import Household, Membership
 from .permissions import IsHouseholdAdmin, IsHouseholdMember, IsHouseholdOwner
 from .serializers import (
@@ -18,6 +20,8 @@ from .serializers import (
     MembershipRoleSerializer,
     MembershipSerializer,
 )
+
+BALANCE_PENDING = 'Settle the outstanding balance (expenses and payments) before leaving the household.'
 
 # Acciones que reciben un código de invitación: se limitan para que no se
 # puedan adivinar códigos a fuerza de intentos
@@ -118,7 +122,10 @@ class HouseholdViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary='Salir del hogar',
-        description='El owner debe transferir la propiedad antes si quedan otros miembros.',
+        description=(
+            'El owner debe transferir la propiedad antes si quedan otros miembros. '
+            'No se puede salir con saldo pendiente (ver /balances/).'
+        ),
         request=None,
         responses={204: None},
     )
@@ -127,6 +134,8 @@ class HouseholdViewSet(viewsets.ModelViewSet):
         household = self.get_object()
         membership = household.get_membership(request.user)
 
+        if user_balance(household, request.user) != 0:
+            raise ValidationError({'detail': BALANCE_PENDING})
         if membership.is_owner:
             if household.memberships.active().exclude(pk=membership.pk).exists():
                 raise ValidationError(
@@ -167,7 +176,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     @extend_schema(
         methods=['DELETE'],
         summary='Expulsar a un miembro',
-        description='Admin u owner. Solo el owner puede expulsar a un admin.',
+        description='Admin u owner. Solo el owner puede expulsar a un admin. No si tiene saldo pendiente.',
         request=None,
         responses={204: None},
     )
@@ -191,6 +200,8 @@ class HouseholdViewSet(viewsets.ModelViewSet):
                 {'detail': 'Only the household owner can remove admins.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if user_balance(target.household, target.user) != 0:
+            raise ValidationError({'detail': 'This member has an outstanding balance; settle it before removing them.'})
         target.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

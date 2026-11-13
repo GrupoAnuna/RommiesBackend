@@ -9,7 +9,8 @@ from rest_framework.test import APITestCase
 
 from households.models import Household, Membership
 
-from .models import Expense, ExpenseParticipant
+from .balances import split_equally
+from .models import Expense, ExpenseParticipant, Payment
 
 User = get_user_model()
 
@@ -26,6 +27,14 @@ def detail_url(expense):
 
 def export_url(household):
     return f'{list_url(household)}export/'
+
+
+def payments_url(household):
+    return f'/api/v1/households/{household.pk}/payments/'
+
+
+def balances_url(household):
+    return f'/api/v1/households/{household.pk}/balances/'
 
 
 class ExpenseTestCase(APITestCase):
@@ -92,7 +101,6 @@ class CreateTests(ExpenseTestCase):
         self.assertEqual(response.data['amount'], '90.00')
         self.assertEqual(response.data['paid_by'], self.member.pk)
         self.assertEqual(response.data['created_by'], self.member.pk)
-        self.assertFalse(response.data['is_settled'])
         self.assertEqual({p['user_name'] for p in response.data['participants']}, {'Memo', 'Olga', 'Ana'})
         expense = Expense.objects.get(pk=response.data['id'])
         self.assertIsInstance(expense.amount, Decimal)
@@ -197,13 +205,6 @@ class EditTests(ExpenseTestCase):
         response = self.client.patch(detail_url(expense), {'title': 'Súper y farmacia'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_settled_expense_cannot_be_edited(self):
-        expense = self.make_expense()
-        self.as_user(self.member)
-        self.client.post(f'{detail_url(expense)}settle/')
-        response = self.client.patch(detail_url(expense), {'title': 'Otro'}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
     def test_delete_creator_or_admin(self):
         expense = self.make_expense(created_by=self.owner)
         self.as_user(self.member)
@@ -223,8 +224,6 @@ class ListTests(ExpenseTestCase):
         self.old = self.make_expense('Luz', spent_on=date(2026, 10, 3))
         self.mid = self.make_expense('Internet', spent_on=date(2026, 11, 1))
         self.new = self.make_expense('Súper', spent_on=date(2026, 11, 20))
-        self.new.settled_at = '2026-11-21T12:00:00Z'
-        self.new.save()
         self.as_user(self.member)
 
     def titles(self, **params):
@@ -236,25 +235,12 @@ class ListTests(ExpenseTestCase):
         self.assertEqual(self.titles(), ['Súper', 'Internet', 'Luz'])
 
     def test_filters(self):
-        self.assertEqual(self.titles(status='pending'), ['Internet', 'Luz'])
-        self.assertEqual(self.titles(status='settled'), ['Súper'])
         self.assertEqual(self.titles(**{'from': '2026-11-01', 'to': '2026-11-30'}), ['Súper', 'Internet'])
 
     def test_invalid_filters(self):
-        for params in ({'status': 'paid'}, {'from': 'ayer'}, {'from': '2026-11-30', 'to': '2026-11-01'}):
+        for params in ({'from': 'ayer'}, {'from': '2026-11-30', 'to': '2026-11-01'}):
             response = self.client.get(list_url(self.household), params)
             self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, params)
-
-    def test_settle_is_idempotent(self):
-        response = self.client.post(f'{detail_url(self.mid)}settle/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['is_settled'])
-        first = response.data['settled_at']
-
-        self.as_user(self.owner)
-        response = self.client.post(f'{detail_url(self.mid)}settle/')
-        self.assertEqual(response.data['settled_at'], first)
-        self.assertEqual(response.data['settled_by'], self.member.pk)
 
 
 class ExportTests(ExpenseTestCase):
@@ -264,6 +250,8 @@ class ExportTests(ExpenseTestCase):
                           shares=[(self.member, '66.67'), (self.owner, '33.33')])
         self.make_expense('=HYPERLINK("http://x")', amount='10.00', spent_on=date(2026, 11, 5))
         self.make_expense('Octubre', spent_on=date(2026, 10, 1))
+        Payment.objects.create(household=self.household, from_user=self.owner, to_user=self.member,
+                               amount=Decimal('33.33'), paid_on=date(2026, 11, 3), note='Transferencia')
         self.as_user(self.member)
 
     def export(self, **params):
@@ -280,14 +268,17 @@ class ExportTests(ExpenseTestCase):
         self.assertTrue(raw.startswith(b'\xef\xbb\xbf'))  # BOM para Excel
 
         rows = list(csv.reader(io.StringIO(raw.decode('utf-8-sig'))))
-        self.assertEqual(rows[0], ['Fecha', 'Concepto', 'Total', 'Pagó', 'Participante', 'Le toca', 'Estado', 'Liquidado el'])
-        self.assertEqual(rows[1], ['2026-11-02', 'Súper y café', '100.00', 'Memo', 'Memo', '66.67', 'Pendiente', ''])
-        self.assertEqual(rows[2][4:6], ['Olga', '33.33'])
-        self.assertEqual(len(rows), 4)  # Octubre queda fuera
+        self.assertEqual(rows[0], ['Fecha', 'Tipo', 'Concepto', 'Total', 'Pagó', 'Para', 'Monto'])
+        self.assertEqual(rows[1], ['2026-11-02', 'Gasto', 'Súper y café', '100.00', 'Memo', 'Memo', '66.67'])
+        self.assertEqual(rows[2][5:7], ['Olga', '33.33'])
+        # El reembolso va en orden de fecha, entre los gastos
+        self.assertEqual(rows[3], ['2026-11-03', 'Reembolso', 'Transferencia', '33.33', 'Olga', 'Memo', '33.33'])
+        self.assertEqual(rows[4][1], 'Gasto')
+        self.assertEqual(len(rows), 5)  # Octubre queda fuera
 
     def test_formulas_are_neutralized(self):
         rows = list(csv.reader(io.StringIO(self.export().content.decode('utf-8-sig'))))
-        titles = [row[1] for row in rows[1:]]
+        titles = [row[2] for row in rows[1:]]
         self.assertIn('\'=HYPERLINK("http://x")', titles)
 
     def test_accepts_text_csv(self):
@@ -304,5 +295,262 @@ class SchemaTests(APITestCase):
     def test_openapi_documents_expense_endpoints(self):
         paths = self.client.get('/api/schema/', {'format': 'json'}).json()['paths']
         base = '/api/v1/households/{household_pk}/expenses/'
-        for path in (base, base + '{id}/', base + '{id}/settle/', base + 'export/'):
+        payments = '/api/v1/households/{household_pk}/payments/'
+        for path in (base, base + '{id}/', base + 'export/', payments, payments + '{id}/',
+                     '/api/v1/households/{household_pk}/balances/'):
             self.assertIn(path, paths)
+        self.assertNotIn(base + '{id}/settle/', paths)
+
+
+class SplitTests(ExpenseTestCase):
+    def split(self, *users):
+        return {'mode': 'equal', 'users': [str(user.pk) for user in users]}
+
+    def test_split_equally_spreads_leftover_cents(self):
+        shares = split_equally(Decimal('100.00'), ['a', 'b', 'c'])
+        self.assertEqual(shares, [('a', Decimal('33.34')), ('b', Decimal('33.33')), ('c', Decimal('33.33'))])
+        self.assertEqual(split_equally(Decimal('0.05'), ['a', 'b'])[0][1], Decimal('0.03'))
+
+    def test_create_with_equal_split(self):
+        self.as_user(self.member)
+        data = self.payload(amount='100.00', split=self.split(self.member, self.owner, self.admin))
+        del data['participants']
+        response = self.client.post(list_url(self.household), data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertNotIn('split', response.data)
+        shares = {p['user_name']: p['amount'] for p in response.data['participants']}
+        self.assertEqual(shares, {'Memo': '33.34', 'Olga': '33.33', 'Ana': '33.33'})
+
+    def test_patch_total_with_split(self):
+        expense = self.make_expense(amount='90.00')
+        self.as_user(self.member)
+        response = self.client.patch(
+            detail_url(expense), {'amount': '50.00', 'split': self.split(self.member, self.owner)}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(sorted(p['amount'] for p in response.data['participants']), ['25.00', '25.00'])
+
+    def test_needs_participants_or_split_but_not_both(self):
+        self.as_user(self.member)
+        data = self.payload()
+        del data['participants']
+        response = self.client.post(list_url(self.household), data, format='json')
+        self.assertIn('participants', response.data)
+
+        response = self.client.post(
+            list_url(self.household), self.payload(split=self.split(self.member)), format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('split', response.data)
+
+    def test_invalid_splits(self):
+        self.as_user(self.member)
+        cases = [
+            ('0.02', self.split(self.member, self.owner, self.admin)),  # no alcanza para un centavo cada uno
+            ('90.00', self.split(self.member, self.member)),
+            ('90.00', self.split()),
+            ('90.00', self.split(self.outsider)),
+            ('90.00', {'mode': 'shares', 'users': [str(self.member.pk)]}),
+        ]
+        for amount, split in cases:
+            data = self.payload(amount=amount, split=split)
+            del data['participants']
+            response = self.client.post(list_url(self.household), data, format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, split)
+            self.assertIn('split', response.data)
+        self.assertFalse(Expense.objects.exists())
+
+
+class PaymentTests(ExpenseTestCase):
+    def test_record_payment_defaults_to_me(self):
+        self.as_user(self.member)
+        response = self.client.post(
+            payments_url(self.household),
+            {'to_user': str(self.owner.pk), 'amount': '25.50', 'note': 'Bizum'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['from_user'], self.member.pk)
+        self.assertEqual(response.data['to_name'], 'Olga')
+        self.assertEqual(response.data['amount'], '25.50')
+        self.assertEqual(response.data['created_by'], self.member.pk)
+
+    def test_record_payment_between_others(self):
+        self.as_user(self.member)
+        response = self.client.post(
+            payments_url(self.household),
+            {'from_user': str(self.admin.pk), 'to_user': str(self.owner.pk), 'amount': '10.00'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['from_user'], self.admin.pk)
+
+    def test_invalid_payments(self):
+        self.as_user(self.member)
+        cases = [
+            ({'to_user': str(self.member.pk), 'amount': '10.00'}, 'to_user'),
+            ({'to_user': str(self.outsider.pk), 'amount': '10.00'}, 'to_user'),
+            ({'to_user': str(self.owner.pk), 'amount': '0'}, 'amount'),
+            ({'to_user': str(self.owner.pk), 'amount': '1.001'}, 'amount'),
+        ]
+        for data, field in cases:
+            response = self.client.post(payments_url(self.household), data, format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, data)
+            self.assertIn(field, response.data)
+        self.assertFalse(Payment.objects.exists())
+
+    def test_list_and_filter_by_date(self):
+        Payment.objects.create(household=self.household, from_user=self.member, to_user=self.owner,
+                               amount=Decimal('5.00'), paid_on=date(2026, 10, 1))
+        Payment.objects.create(household=self.household, from_user=self.admin, to_user=self.owner,
+                               amount=Decimal('7.00'), paid_on=date(2026, 11, 2))
+        self.as_user(self.member)
+        response = self.client.get(payments_url(self.household))
+        self.assertEqual([p['amount'] for p in response.data['results']], ['7.00', '5.00'])
+        response = self.client.get(payments_url(self.household), {'from': '2026-11-01'})
+        self.assertEqual(response.data['count'], 1)
+
+    def test_delete_only_involved_or_admin(self):
+        payment = Payment.objects.create(household=self.household, from_user=self.admin, to_user=self.owner,
+                                         amount=Decimal('5.00'), created_by=self.admin)
+        url = f'{payments_url(self.household)}{payment.pk}/'
+        self.as_user(self.member)
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_403_FORBIDDEN)
+        self.as_user(self.owner)  # quien lo recibió
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_no_editing_and_outsider_404(self):
+        payment = Payment.objects.create(household=self.household, from_user=self.admin, to_user=self.owner,
+                                         amount=Decimal('5.00'))
+        url = f'{payments_url(self.household)}{payment.pk}/'
+        self.as_user(self.admin)
+        self.assertEqual(self.client.patch(url, {'amount': '1.00'}, format='json').status_code,
+                         status.HTTP_405_METHOD_NOT_ALLOWED)
+        self.as_user(self.outsider)
+        self.assertEqual(self.client.get(payments_url(self.household)).status_code, status.HTTP_404_NOT_FOUND)
+
+
+class BalanceTests(ExpenseTestCase):
+    def balances(self, user=None):
+        self.as_user(user or self.member)
+        response = self.client.get(balances_url(self.household))
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        return response.data
+
+    def by_name(self, data):
+        return {m['name']: m for m in data['members']}
+
+    def test_no_activity_everyone_at_zero(self):
+        data = self.balances()
+        self.assertEqual(data['total_spent'], '0.00')
+        self.assertEqual(data['my_balance'], '0.00')
+        self.assertEqual({m['balance'] for m in data['members']}, {'0.00'})
+        self.assertEqual(len(data['members']), 3)
+        self.assertEqual(data['suggested_transfers'], [])
+
+    def test_balances_and_transfers(self):
+        # Memo paga 90 entre los tres; Olga paga 30 solo para Ana
+        self.make_expense(amount='90.00', paid_by=self.member,
+                          shares=[(self.member, '30.00'), (self.owner, '30.00'), (self.admin, '30.00')])
+        self.make_expense(amount='30.00', paid_by=self.owner, shares=[(self.admin, '30.00')])
+
+        data = self.balances()
+        members = self.by_name(data)
+        self.assertEqual(data['total_spent'], '120.00')
+        self.assertEqual(members['Memo']['paid'], '90.00')
+        self.assertEqual(members['Memo']['share'], '30.00')
+        self.assertEqual(members['Memo']['balance'], '60.00')
+        self.assertEqual(members['Olga']['balance'], '0.00')
+        self.assertEqual(members['Ana']['balance'], '-60.00')
+        self.assertEqual(data['my_balance'], '60.00')
+        # Primero quien más le deben
+        self.assertEqual(data['members'][0]['name'], 'Memo')
+        self.assertEqual(data['suggested_transfers'], [{
+            'from_user': str(self.admin.pk), 'from_name': 'Ana',
+            'to_user': str(self.member.pk), 'to_name': 'Memo', 'amount': '60.00',
+        }])
+
+    def test_payment_settles_up(self):
+        self.make_expense(amount='90.00', paid_by=self.member,
+                          shares=[(self.member, '30.00'), (self.owner, '30.00'), (self.admin, '30.00')])
+        self.as_user(self.owner)
+        self.client.post(payments_url(self.household),
+                         {'to_user': str(self.member.pk), 'amount': '30.00'}, format='json')
+
+        members = self.by_name(self.balances())
+        self.assertEqual(members['Olga']['sent'], '30.00')
+        self.assertEqual(members['Olga']['balance'], '0.00')
+        self.assertEqual(members['Memo']['received'], '30.00')
+        self.assertEqual(members['Memo']['balance'], '30.00')
+
+        self.as_user(self.admin)
+        self.client.post(payments_url(self.household),
+                         {'to_user': str(self.member.pk), 'amount': '30.00'}, format='json')
+        data = self.balances()
+        self.assertEqual({m['balance'] for m in data['members']}, {'0.00'})
+        self.assertEqual(data['suggested_transfers'], [])
+
+    def test_balances_always_add_up_to_zero(self):
+        self.make_expense(amount='100.00', paid_by=self.owner,
+                          shares=[(self.member, '33.34'), (self.owner, '33.33'), (self.admin, '33.33')])
+        self.make_expense(amount='17.99', paid_by=self.admin, shares=[(self.member, '17.99')])
+        Payment.objects.create(household=self.household, from_user=self.member, to_user=self.owner,
+                               amount=Decimal('12.34'))
+        data = self.balances()
+        total = sum(Decimal(m['balance']) for m in data['members'])
+        self.assertEqual(total, Decimal('0'))
+
+        # Hacer las transferencias sugeridas deja a todos en 0
+        for transfer in data['suggested_transfers']:
+            Payment.objects.create(household=self.household, from_user_id=transfer['from_user'],
+                                   to_user_id=transfer['to_user'], amount=Decimal(transfer['amount']))
+        self.assertEqual({m['balance'] for m in self.balances()['members']}, {'0.00'})
+
+    def test_transfers_are_few(self):
+        # Dos deudores y un acreedor: dos pagos, no más
+        self.make_expense(amount='90.00', paid_by=self.owner,
+                          shares=[(self.member, '45.00'), (self.admin, '45.00')])
+        transfers = self.balances()['suggested_transfers']
+        self.assertEqual(len(transfers), 2)
+        self.assertEqual({t['to_name'] for t in transfers}, {'Olga'})
+
+    def test_former_member_with_balance_still_appears(self):
+        self.make_expense(amount='20.00', paid_by=self.owner, shares=[(self.member, '20.00')])
+        Membership.objects.filter(user=self.member).delete()
+        data = self.balances(self.owner)
+        memo = self.by_name(data)['Memo']
+        self.assertFalse(memo['is_member'])
+        self.assertEqual(memo['balance'], '-20.00')
+
+    def test_only_this_household(self):
+        Expense.objects.create(household=self.other_household, title='Ajeno', amount=Decimal('50.00'),
+                               paid_by=self.outsider)
+        self.assertEqual(self.balances()['total_spent'], '0.00')
+        self.as_user(self.outsider)
+        self.assertEqual(self.client.get(balances_url(self.household)).status_code, status.HTTP_404_NOT_FOUND)
+
+
+class LeaveWithBalanceTests(ExpenseTestCase):
+    def setUp(self):
+        super().setUp()
+        self.make_expense(amount='20.00', paid_by=self.owner, shares=[(self.member, '20.00')])
+
+    def test_cannot_leave_with_balance(self):
+        self.as_user(self.member)
+        response = self.client.post(f'/api/v1/households/{self.household.pk}/leave/')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(self.household.get_membership(self.member))
+
+        Payment.objects.create(household=self.household, from_user=self.member, to_user=self.owner,
+                               amount=Decimal('20.00'))
+        response = self.client.post(f'/api/v1/households/{self.household.pk}/leave/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_cannot_remove_member_with_balance(self):
+        self.as_user(self.owner)
+        url = f'/api/v1/households/{self.household.pk}/members/{self.member.pk}/'
+        self.assertEqual(self.client.delete(url).status_code, status.HTTP_400_BAD_REQUEST)
+        # Sin movimientos sí se puede
+        admin_url = f'/api/v1/households/{self.household.pk}/members/{self.admin.pk}/'
+        self.assertEqual(self.client.delete(admin_url).status_code, status.HTTP_204_NO_CONTENT)
