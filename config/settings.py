@@ -159,6 +159,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Fotos de tickets. No se sirven como estáticos: se descargan por el API, solo miembros
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
+MEDIA_URL = 'media/'
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 

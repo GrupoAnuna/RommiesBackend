@@ -14,7 +14,7 @@ from django.db.models import Sum
 
 from households.models import Membership
 
-from .models import Expense, ExpenseParticipant, Payment
+from .models import ExpenseParticipant, ExpensePayer, Payment
 
 User = get_user_model()
 
@@ -36,6 +36,25 @@ def split_equally(amount, users):
     """
     base, remainder = divmod(to_cents(amount), len(users))
     return [(user, from_cents(base + (1 if i < remainder else 0))) for i, user in enumerate(users)]
+
+
+def split_proportionally(amount, weights):
+    """Reparte `amount` en proporción a `weights` (montos). Los centavos que
+    sobran van a los de mayor resto, así la suma es exacta.
+
+    4.200 entre quienes pagaron 8.000 y 4.600 → 2.666,67 y 1.533,33
+    """
+    weights = [to_cents(w) for w in weights]
+    total = sum(weights)
+    cents = to_cents(amount)
+    # Enteros, nunca float: (parte, resto) de cents × peso / total
+    shares = [divmod(cents * w, total) for w in weights]
+    parts = [quotient for quotient, _ in shares]
+    leftover = cents - sum(parts)
+    by_remainder = sorted(range(len(weights)), key=lambda i: (-shares[i][1], i))
+    for i in by_remainder[:leftover]:
+        parts[i] += 1
+    return [from_cents(p) for p in parts]
 
 
 @dataclass
@@ -67,7 +86,7 @@ def _sums(queryset, key):
 
 
 def compute_balances(household):
-    paid = _sums(Expense.objects.filter(household=household), 'paid_by')
+    paid = _sums(ExpensePayer.objects.filter(expense__household=household), 'user')
     share = _sums(ExpenseParticipant.objects.filter(expense__household=household), 'user')
     sent = _sums(Payment.objects.filter(household=household), 'from_user')
     received = _sums(Payment.objects.filter(household=household), 'to_user')

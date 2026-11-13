@@ -28,9 +28,22 @@ def normalize_join_code(value):
     return code
 
 
+# Monedas que ofrece la app (ISO 4217), en el orden del diseño
+CURRENCY_CHOICES = [
+    ('ARS', 'Peso argentino'),
+    ('MXN', 'Peso mexicano'),
+    ('CLP', 'Peso chileno'),
+    ('COP', 'Peso colombiano'),
+    ('USD', 'Dólar estadounidense'),
+    ('EUR', 'Euro'),
+]
+
+
 class Household(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120)
+    # Se elige al registrar el primer gasto; cambiarla no convierte los montos
+    currency = models.CharField(max_length=3, choices=CURRENCY_CHOICES, blank=True, default='')
     join_code = models.CharField(max_length=JOIN_CODE_MAX_LENGTH, unique=True, default=generate_join_code)
     # Se mantiene sincronizado con la membresía de rol owner (ver transfer_ownership)
     owner = models.ForeignKey(

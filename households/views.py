@@ -14,6 +14,7 @@ from expenses.balances import user_balance
 from .models import Household, Membership
 from .permissions import IsHouseholdAdmin, IsHouseholdMember, IsHouseholdOwner
 from .serializers import (
+    CurrencySerializer,
     HouseholdPreviewSerializer,
     HouseholdSerializer,
     JoinHouseholdSerializer,
@@ -48,6 +49,7 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     action_permissions = {
         'retrieve': [IsHouseholdMember],
         'members': [IsHouseholdMember],
+        'currency': [IsHouseholdMember],
         'leave': [IsHouseholdMember],
         'update': [IsHouseholdAdmin],
         'partial_update': [IsHouseholdAdmin],
@@ -157,6 +159,21 @@ class HouseholdViewSet(viewsets.ModelViewSet):
     def regenerate_code(self, request, pk=None):
         household = self.get_object()
         household.regenerate_join_code()
+        return Response(self.get_serializer(household).data)
+
+    @extend_schema(
+        summary='Cambiar moneda del hogar',
+        description='Cualquier miembro. Solo cambia el símbolo: los montos guardados no se convierten.',
+        request=CurrencySerializer,
+        responses=HouseholdSerializer,
+    )
+    @action(detail=True, methods=['post'])
+    def currency(self, request, pk=None):
+        household = self.get_object()
+        serializer = CurrencySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        household.currency = serializer.validated_data['currency']
+        household.save(update_fields=['currency'])
         return Response(self.get_serializer(household).data)
 
     @extend_schema(summary='Listar miembros', responses=MembershipSerializer(many=True))
