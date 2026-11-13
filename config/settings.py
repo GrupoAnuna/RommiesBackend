@@ -191,6 +191,7 @@ SPECTACULAR_SETTINGS = {
         {"name": "Me", "description": "Usuario autenticado y sus hogares."},
         {"name": "Households", "description": "Hogares, código de invitación, miembros y roles."},
         {"name": "Tasks", "description": "Tareas del hogar."},
+        {"name": "Expenses", "description": "Gastos del hogar: quién pagó, cuánto le toca a cada uno, liquidar y exportar a CSV."},
     ],
 }
 
