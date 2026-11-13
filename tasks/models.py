@@ -18,32 +18,20 @@ class Task(models.Model):
         (PRIORITY_HIGH, 'High'),
     ]
 
-    # El MVP solo repite cada semana (mismo día y hora)
-    REPEAT_NONE = 'none'
-    REPEAT_WEEKLY = 'weekly'
-
-    REPEAT_CHOICES = [
-        (REPEAT_NONE, 'No repeat'),
-        (REPEAT_WEEKLY, 'Weekly'),
-    ]
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name='tasks')
     title = models.CharField(max_length=120)
     description = models.TextField(blank=True)
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default=PRIORITY_MEDIUM)
-    # Asignación manual a un miembro del hogar; sin asignar si es null
-    assignee = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='assigned_tasks',
-    )
-    # Fecha y hora obligatorias: la app programa el recordatorio local con ellas
-    due_at = models.DateTimeField()
-    repeat_rule = models.CharField(max_length=10, choices=REPEAT_CHOICES, default=REPEAT_NONE)
-    # Tarea semanal de la que salió esta al completarla
+    # Responsables: al menos uno, todos miembros activos del hogar
+    assignees = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name='assigned_tasks', blank=True)
+    # Día en que vence, en la hora local del hogar
+    due_date = models.DateField()
+    # Hora del recordatorio local en el teléfono de cada responsable; null = sin aviso
+    reminder_time = models.TimeField(null=True, blank=True)
+    # Días en que se repite, 0 = lunes ... 6 = domingo; vacío si no se repite
+    repeat_days = models.JSONField(default=list, blank=True)
+    # Tarea de la que salió esta al completarla
     previous = models.OneToOneField(
         'self',
         on_delete=models.SET_NULL,
@@ -70,12 +58,20 @@ class Task(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['due_at', 'created_at']
-        indexes = [models.Index(fields=['household', 'due_at'])]
+        ordering = ['due_date', 'reminder_time', 'created_at']
+        indexes = [models.Index(fields=['household', 'due_date'], name='tasks_household_due_date_idx')]
 
     @property
     def is_done(self):
         return self.completed_at is not None
+
+    def next_due_date(self):
+        """El siguiente día marcado después de la fecha límite actual."""
+        for offset in range(1, 8):
+            day = self.due_date + timedelta(days=offset)
+            if day.weekday() in self.repeat_days:
+                return day
+        return None
 
     def get_next_occurrence(self):
         try:
@@ -84,18 +80,20 @@ class Task(models.Model):
             return None
 
     def create_next_occurrence(self):
-        """Copia la tarea una semana después, pendiente y con la misma asignación."""
-        return Task.objects.create(
+        """Copia la tarea al siguiente día marcado, pendiente y con los mismos responsables."""
+        next_task = Task.objects.create(
             household=self.household,
             title=self.title,
             description=self.description,
             priority=self.priority,
-            assignee=self.assignee,
-            due_at=self.due_at + timedelta(weeks=1),
-            repeat_rule=self.repeat_rule,
+            due_date=self.next_due_date(),
+            reminder_time=self.reminder_time,
+            repeat_days=self.repeat_days,
             previous=self,
             created_by=self.created_by,
         )
+        next_task.assignees.set(self.assignees.all())
+        return next_task
 
     def __str__(self):
         return self.title
