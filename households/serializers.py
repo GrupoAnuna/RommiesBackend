@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Household, Membership, normalize_join_code
+from .models import CURRENCY_CHOICES, Household, Membership, normalize_join_code
 
 
 class HouseholdSerializer(serializers.ModelSerializer):
@@ -9,8 +9,9 @@ class HouseholdSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Household
-        fields = ['id', 'name', 'join_code', 'owner', 'created_at', 'my_role', 'member_count']
-        read_only_fields = ['join_code', 'owner', 'created_at']
+        fields = ['id', 'name', 'currency', 'join_code', 'owner', 'created_at', 'my_role', 'member_count']
+        # La moneda se cambia con /currency/ (cualquier miembro), no al editar el hogar
+        read_only_fields = ['currency', 'join_code', 'owner', 'created_at']
 
     def get_member_count(self, obj) -> int:
         # Viene anotado desde el queryset del viewset; si no, se cuenta
@@ -74,3 +75,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 
 class MembershipRoleSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=Membership.ROLE_CHOICES)
+
+
+class CurrencySerializer(serializers.Serializer):
+    currency = serializers.ChoiceField(choices=CURRENCY_CHOICES, help_text='Código ISO: ARS, MXN, CLP, COP, USD o EUR.')
