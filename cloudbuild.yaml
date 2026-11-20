@@ -1,0 +1,25 @@
+steps:
+  # 1. Construir la imagen de Docker usando tu Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build', 
+      '-t', 'gcr.io/$PROJECT_ID/rommiesbackend:$COMMIT_SHA', 
+      '-f', 'Dockerfile', 
+      '.'
+    ]
+
+  # 2. Desplegar la imagen recién construida a tu servicio de Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'rommiesbackend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/rommiesbackend:$COMMIT_SHA'
+      - '--region'
+      - 'northamerica-south1'
+
+# Declaramos la imagen para que Cloud Build la registre
+images:
+  - 'gcr.io/$PROJECT_ID/rommiesbackend:$COMMIT_SHA'
