@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+import dj_database_url
 import firebase_admin
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
@@ -34,8 +35,16 @@ def env_list(name, default=''):
 cred_path = BASE_DIR / os.getenv('FIREBASE_CREDENTIALS', 'service-account.json')
 # Evitar inicializar dos veces si Django recarga
 if not firebase_admin._apps:
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred)
+    if cred_path.is_file():
+        # Local: JSON de la cuenta de servicio
+        firebase_admin.initialize_app(credentials.Certificate(cred_path))
+    else:
+        # Cloud Run: cuenta de servicio del servicio (Application Default Credentials)
+        project_id = os.getenv('FIREBASE_PROJECT_ID')
+        firebase_admin.initialize_app(
+            credentials.ApplicationDefault(),
+            {'projectId': project_id} if project_id else None,
+        )
 
 
 # Quick-start development settings - unsuitable for production
@@ -50,6 +59,14 @@ if not SECRET_KEY:
 DEBUG = env_bool('DJANGO_DEBUG', False)
 
 ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1')
+
+# Orígenes https desde los que se envían formularios (admin), p. ej. https://xxx.run.app
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
+
+# Cloud Run termina el TLS y reenvía la petición por http con X-Forwarded-Proto
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 
 # Application definition
@@ -80,6 +97,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
+    # Sirve los estáticos del admin en producción
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -115,11 +134,13 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# Local: SQLite. Producción: DATABASE_URL apuntando a Cloud SQL (PostgreSQL), ver README
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        conn_max_age=60,
+        conn_health_checks=True,
+    )
 }
 
 
@@ -158,10 +179,23 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Fotos de tickets. No se sirven como estáticos: se descargan por el API, solo miembros
 MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', BASE_DIR / 'media'))
 MEDIA_URL = 'media/'
+
+# En Cloud Run el disco es temporal: con GS_BUCKET_NAME los tickets se guardan en Cloud Storage
+GS_BUCKET_NAME = os.getenv('GS_BUCKET_NAME')
+
+STORAGES = {
+    'default': (
+        {'BACKEND': 'storages.backends.gcloud.GoogleCloudStorage'}
+        if GS_BUCKET_NAME
+        else {'BACKEND': 'django.core.files.storage.FileSystemStorage'}
+    ),
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field

@@ -1,0 +1,14 @@
+# Nunca meter secretos ni datos locales en la imagen
+.env
+service-account.json
+*.json.bak
+db.sqlite3
+media/
+staticfiles/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.git/
+.idea/
+.vscode/

@@ -45,6 +45,10 @@ pip install -r requirements.txt
 | `CORS_ALLOW_ALL_ORIGINS` | Permitir cualquier origen (solo dev) | igual que `DJANGO_DEBUG` |
 | `CORS_ALLOWED_ORIGINS` | Orígenes permitidos en prod, separados por comas | vacío |
 | `FIREBASE_CREDENTIALS` | Ruta al JSON de la cuenta de servicio | `service-account.json` |
+| `FIREBASE_PROJECT_ID` | Proyecto de Firebase si no hay JSON (Cloud Run) | el del entorno |
+| `DATABASE_URL` | Base de datos (Cloud SQL en prod) | SQLite local |
+| `GS_BUCKET_NAME` | Bucket de Cloud Storage para las fotos de tickets | disco local (`media/`) |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | Orígenes https para el admin, separados por comas | vacío |
 
 ## Autenticación
 
@@ -100,6 +104,28 @@ Cada usuario puede pertenecer a varios hogares con uno de estos roles:
 
 Para otras apps, `households.permissions` ofrece `IsHouseholdMember`, `IsHouseholdAdmin` e
 `IsHouseholdOwner`, que funcionan con un `Household` o con cualquier objeto que tenga FK `household`.
+
+## Despliegue en Cloud Run
+
+La imagen se construye con el `Dockerfile` (gunicorn + WhiteNoise para los estáticos del admin).
+
+1. **Cloud SQL**: crea una instancia PostgreSQL en la misma región que el servicio, una base y un usuario.
+2. **Bucket** de Cloud Storage para los tickets. La cuenta de servicio de Cloud Run necesita
+   *Storage Object Admin* en el bucket y *Cloud SQL Client* en el proyecto.
+3. **Secretos** en Secret Manager: `DJANGO_SECRET_KEY` y `DATABASE_URL` (contiene la contraseña).
+4. **Servicio**: conecta la instancia de Cloud SQL (pestaña *Conexiones*) y define las variables:
+   `DJANGO_DEBUG=False`, `DJANGO_ALLOWED_HOSTS=<host>.run.app`,
+   `DJANGO_CSRF_TRUSTED_ORIGINS=https://<host>.run.app`, `GS_BUCKET_NAME`, `FIREBASE_PROJECT_ID`.
+   Firebase usa la cuenta de servicio del servicio, no hace falta subir el JSON.
+5. **Migraciones**: un Cloud Run Job con la misma imagen y comando `python manage.py migrate`
+   (y `python manage.py createsuperuser --noinput` con `DJANGO_SUPERUSER_*` para el admin).
+   Ejecútalo después de cada despliegue que traiga migraciones.
+
+`DATABASE_URL` para Cloud SQL por socket (los `/` y `:` del host van codificados):
+
+```
+postgres://USUARIO:CLAVE@%2Fcloudsql%2FPROYECTO%3AREGION%3AINSTANCIA/BASE
+```
 
 ## Tests
 
